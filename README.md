@@ -160,38 +160,127 @@ elapsed time appear. When both phones cross the finish:
 
 ## Installing
 
-You need to build it yourself for now (no Play Store release).
+You need to build it yourself for now (no Play Store release). Two phones,
+two installs. Plan on ~20–30 minutes the first time, mostly waiting for
+Android Studio to download SDKs and sync Gradle.
 
-### Requirements
+### What you need
 
-- Android Studio Hedgehog (2023.1) or newer
-- JDK 17
-- Two Android phones, **API 26+** (Android 8.0 Oreo or newer)
-- Both phones must have Bluetooth and GPS
+- A laptop (Windows / macOS / Linux)
+- **Android Studio** Hedgehog (2023.1) or newer — [download here](https://developer.android.com/studio)
+- **JDK 17** (Android Studio bundles one — you don't need a separate install)
+- A USB cable that actually does data (some "charging only" cables won't work)
+- Two Android phones, **Android 8.0 (Oreo) or newer**, with Bluetooth and GPS
 
-### Build & install
+### Step 1 — Install Android Studio
+
+1. Download and run the installer from the link above.
+2. On first launch, accept the default "Standard" setup. It will download
+   the Android SDK, platform tools, and an emulator (~3–5 GB). Let it finish.
+
+### Step 2 — Get the project onto your laptop
+
+Either clone with git:
 
 ```bash
-git clone <this repo>
+git clone <your repo URL>
 cd Race-Link
-# Open in Android Studio, let Gradle sync, then either:
-./gradlew installDebug    # with a phone on USB + USB debugging on
-# or use Run ▶ in Android Studio
 ```
 
-Repeat on the second phone (or `adb -s <serial> install app/build/outputs/apk/debug/app-debug.apk`).
+…or in Android Studio: **File → New → Project from Version Control → Git**,
+paste the repo URL.
 
-### Permissions
+Or, if you already have it as a folder: **File → Open** and pick the
+`Race-Link` folder (the one with `settings.gradle.kts` in it — *not* the
+`app/` folder inside).
 
-On first launch the app asks for:
+### Step 3 — Let Gradle sync
 
-- **Location (precise)** — required for GPS speed and, on Android ≤ 11,
-  for Bluetooth discovery.
-- **Nearby devices** (Android 12+) — Bluetooth scan + connect.
+When Android Studio opens the project, a banner at the top says
+**"Gradle sync in progress..."**. First time it will:
 
-Grant both. If you deny, the home screen will keep prompting.
+- download Gradle 8.7
+- download the Android Gradle Plugin and Kotlin compiler
+- download Compose, Play Services, etc.
 
-You may also need to **enable Bluetooth and GPS** in system settings.
+This takes 5–15 minutes on a fresh install. Watch the bottom status bar.
+When it's done you'll see "Gradle sync finished".
+
+If it prompts you to install missing SDK platforms (e.g.
+"Install build tools 34.0.0"), click **Yes / Accept license**.
+
+If sync fails with "JDK not found" or similar:
+**File → Settings → Build, Execution, Deployment → Build Tools → Gradle**,
+set **Gradle JDK** to the bundled "Embedded JDK" (jbr-17). Then **File →
+Sync Project with Gradle Files**.
+
+### Step 4 — Put your phone in developer mode
+
+Once per phone:
+
+1. Open **Settings → About phone**.
+2. Tap **Build number** seven times. (On Samsung this is under
+   **Software information**.) You'll see "You are now a developer!"
+3. Back up one screen. There's a new **Developer options** entry.
+4. Open **Developer options** and turn on **USB debugging**.
+
+### Step 5 — Plug the phone in
+
+1. Connect phone to laptop with a USB cable.
+2. The phone shows a popup: **"Allow USB debugging from this computer?"**
+   Tap **Allow**. Tick "Always allow" so it doesn't ask every time.
+3. Pull down the notification shade on the phone, find the USB notification,
+   and switch it from **Charging** to **File transfer (MTP)** if it's not
+   already. (Some phones need this for ADB to see the device.)
+4. Back in Android Studio, the device dropdown at the top of the window
+   should now show your phone (e.g. "Pixel 7").
+
+If your phone doesn't show up:
+- Windows: you may need OEM USB drivers. Search
+  "<your phone brand> USB driver" — most manufacturers publish them.
+- macOS / Linux: usually plug-and-play. Try a different cable.
+- Run `adb devices` from `~/Library/Android/sdk/platform-tools/`
+  (macOS) or `%LOCALAPPDATA%\Android\Sdk\platform-tools\` (Windows). You
+  should see your phone listed. If it says "unauthorized", re-tap Allow on
+  the phone.
+
+### Step 6 — Build & install
+
+With your phone selected in the device dropdown, press the green
+**▶ Run** button (or **Shift+F10**). Android Studio will:
+
+1. Compile the app
+2. Build a debug APK
+3. Push it to the phone over USB
+4. Launch it
+
+First build is slow (~2–5 min). Subsequent runs are seconds.
+
+When the app opens on the phone, grant the **Location** and **Nearby
+devices** (Bluetooth) permissions when asked.
+
+### Step 7 — Repeat for the second phone
+
+Unplug phone 1, plug in phone 2, follow steps 4–6 again. Or if you have
+two USB ports / a hub, just switch the device in the dropdown and hit Run
+again — Android Studio will install on whichever phone is selected.
+
+### Alternative: install from APK file
+
+If you only have one USB cable or the second phone is across the room:
+
+1. In Android Studio: **Build → Build App Bundle(s) / APK(s) → Build APK(s)**.
+2. When done, click the **locate** link in the notification — it opens the
+   folder containing `app-debug.apk`.
+3. Copy that file to the second phone (email it to yourself, drop it in
+   Google Drive, AirDrop equivalent, etc.).
+4. On the second phone, tap the APK. You'll be asked to allow installs
+   from this source the first time.
+
+### After install
+
+The app icon shows up as **Race Link** in the launcher. Open it on both
+phones and follow the pairing steps below.
 
 ---
 
