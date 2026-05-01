@@ -29,6 +29,7 @@ import com.racelink.app.ui.InboundRequestDialog
 import com.racelink.app.ui.PairingScreen
 import com.racelink.app.ui.RaceConfigScreen
 import com.racelink.app.ui.RaceScreen
+import com.racelink.app.ui.TutorialScreen
 import com.racelink.app.ui.theme.RaceLinkTheme
 
 class MainActivity : ComponentActivity() {
@@ -53,12 +54,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { HOME, PAIRING, CONFIG, RACE }
+private enum class Screen { TUTORIAL, HOME, PAIRING, CONFIG, RACE }
 
 @Composable
 private fun AppRoot(vm: AppViewModel) {
     val context = LocalContext.current
-    var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
+    val prefs = remember { AppPrefs(context) }
+    var screen by rememberSaveable {
+        mutableStateOf(if (prefs.tutorialSeen) Screen.HOME else Screen.TUTORIAL)
+    }
 
     var hasBt by remember { mutableStateOf(vm.link.hasConnectPerm() && vm.link.hasScanPerm()) }
     var hasLoc by remember { mutableStateOf(vm.tracker.hasPermission()) }
@@ -113,11 +117,18 @@ private fun AppRoot(vm: AppViewModel) {
 
     Box(Modifier.fillMaxSize()) {
         when (screen) {
+            Screen.TUTORIAL -> TutorialScreen(
+                onFinish = {
+                    prefs.tutorialSeen = true
+                    screen = Screen.HOME
+                },
+            )
             Screen.HOME -> HomeScreen(
                 btReady = hasBt,
                 locReady = hasLoc,
                 onPair = { screen = Screen.PAIRING },
                 onRequestPermissions = askPerms,
+                onShowTutorial = { screen = Screen.TUTORIAL },
             )
             Screen.PAIRING -> PairingScreen(
                 state = linkState,

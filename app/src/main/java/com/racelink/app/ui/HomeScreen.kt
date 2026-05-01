@@ -12,6 +12,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,6 +26,7 @@ fun HomeScreen(
     locReady: Boolean,
     onPair: () -> Unit,
     onRequestPermissions: () -> Unit,
+    onShowTutorial: () -> Unit = {},
 ) {
     Column(
         Modifier.fillMaxSize().padding(24.dp),
@@ -60,6 +62,11 @@ fun HomeScreen(
             OutlinedButton(onClick = onPair, modifier = Modifier.fillMaxWidth()) {
                 Text("Wait for incoming challenge")
             }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        TextButton(onClick = onShowTutorial) {
+            Text("How to use", color = MaterialTheme.colorScheme.secondary)
         }
     }
 }
