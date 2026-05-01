@@ -1,7 +1,15 @@
 package com.racelink.app.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,11 +20,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Button
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -25,12 +36,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.racelink.app.race.RaceEngine
+import com.racelink.app.race.StartType
+import com.racelink.app.ui.theme.RaceColors
+import kotlin.math.abs
 
 @Composable
 fun RaceScreen(
@@ -39,186 +55,367 @@ fun RaceScreen(
     onAbort: () -> Unit,
     onDone: () -> Unit,
 ) {
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .padding(16.dp),
+            .background(
+                Brush.verticalGradient(
+                    listOf(RaceColors.BgGradientTop, RaceColors.BgGradientBottom)
+                )
+            ),
     ) {
-        TopHud(state)
-        Spacer(Modifier.height(16.dp))
-        TreeLights(state)
-        Spacer(Modifier.height(16.dp))
-        SpeedBlock(state)
-        Spacer(Modifier.weight(1f))
-        BottomControls(state, onReady, onAbort, onDone)
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        ) {
+            Spacer(Modifier.height(12.dp))
+            TopHud(state)
+            Spacer(Modifier.height(16.dp))
+
+            // The visual stage swaps based on phase: pre-race we show a big tree,
+            // mid-race we show distance + tree, post-race we show results.
+            AnimatedContent(
+                targetState = state.phase,
+                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(150)) },
+                label = "stage",
+            ) { phase ->
+                when (phase) {
+                    RaceEngine.Phase.RUNNING, RaceEngine.Phase.FINISHED -> {
+                        Column {
+                            DistancePanel(state)
+                            Spacer(Modifier.height(12.dp))
+                            TreeFrame(state.light, compact = true)
+                        }
+                    }
+                    else -> TreeFrame(state.light, compact = false)
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SpeedCard("YOU", state.selfSpeedMph, targetMph = state.config.rollSpeedMph,
+                    tolerance = state.config.speedToleranceMph,
+                    rolling = state.config.startType == StartType.ROLLING,
+                    ready = state.selfReady,
+                    accent = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f))
+                SpeedCard("OPP", state.peerSpeedMph, targetMph = state.config.rollSpeedMph,
+                    tolerance = state.config.speedToleranceMph,
+                    rolling = state.config.startType == StartType.ROLLING,
+                    ready = state.peerReady,
+                    accent = RaceColors.Blue,
+                    modifier = Modifier.weight(1f))
+            }
+
+            if (state.phase == RaceEngine.Phase.FINISHED) {
+                Spacer(Modifier.height(12.dp))
+                ResultsCard(state)
+            }
+
+            Spacer(Modifier.weight(1f))
+            BottomControls(state, onReady, onAbort, onDone)
+            Spacer(Modifier.height(16.dp))
+        }
     }
 }
+
+// ─── Top HUD ─────────────────────────────────────────────────────────────────
 
 @Composable
 private fun TopHud(state: RaceEngine.State) {
     val cfg = state.config
-    val phaseLabel = when (state.phase) {
-        RaceEngine.Phase.IDLE -> "—"
-        RaceEngine.Phase.ARMED -> if (cfg.startType.name == "ROLLING")
-            "Cruise to ${cfg.rollSpeedMph} mph (±${cfg.speedToleranceMph})"
-        else "Come to a stop"
-        RaceEngine.Phase.STAGED -> "Staged"
-        RaceEngine.Phase.TREE -> "Tree"
-        RaceEngine.Phase.RUNNING -> "Racing"
-        RaceEngine.Phase.FINISHED -> "Finished"
-        RaceEngine.Phase.ABORTED -> "Aborted"
+    val (label, color) = when (state.phase) {
+        RaceEngine.Phase.IDLE -> "READY UP" to RaceColors.OnSurfaceMuted
+        RaceEngine.Phase.ARMED -> if (cfg.startType == StartType.ROLLING)
+            "CRUISE TO ${cfg.rollSpeedMph} MPH" to MaterialTheme.colorScheme.secondary
+        else "STAGE THE CAR" to MaterialTheme.colorScheme.secondary
+        RaceEngine.Phase.STAGED -> "STAGED" to MaterialTheme.colorScheme.secondary
+        RaceEngine.Phase.TREE -> "GO" to RaceColors.Green
+        RaceEngine.Phase.RUNNING -> "RACING" to RaceColors.Green
+        RaceEngine.Phase.FINISHED -> "FINISHED" to MaterialTheme.colorScheme.primary
+        RaceEngine.Phase.ABORTED -> "ABORTED" to MaterialTheme.colorScheme.error
     }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            phaseLabel,
-            color = MaterialTheme.colorScheme.secondary,
-            fontWeight = FontWeight.Bold,
-            fontSize = 18.sp,
-        )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        StatusPill(label, color)
         Spacer(Modifier.weight(1f))
         Text(
-            "${state.config.distanceFt} ft  •  ${if (state.isHost) "Host" else "Guest"}",
-            color = Color.White.copy(alpha = 0.7f),
+            "${distanceLabel(cfg.distanceFt)} • ${if (state.isHost) "HOST" else "GUEST"}",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium,
         )
     }
 }
 
+private fun distanceLabel(ft: Int) = when (ft) {
+    660 -> "1/8 MI"
+    1000 -> "1000 FT"
+    1320 -> "1/4 MI"
+    else -> "$ft FT"
+}
+
+// ─── Tree ────────────────────────────────────────────────────────────────────
+
 @Composable
-private fun TreeLights(state: RaceEngine.State) {
-    val active = state.light
+private fun TreeFrame(light: RaceEngine.TreeLight, compact: Boolean) {
+    val height = if (compact) 96.dp else 320.dp
     Box(
         Modifier
             .fillMaxWidth()
-            .height(220.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF111111)),
+            .height(height)
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF050507), Color(0xFF0E0E15))
+                )
+            )
+            .border(1.dp, RaceColors.Outline, RoundedCornerShape(20.dp)),
         contentAlignment = Alignment.Center,
     ) {
+        if (compact) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                TreeBulb(on = isOn(light, RaceEngine.TreeLight.AMBER1, andAfter = true), color = RaceColors.Amber, size = 26.dp)
+                TreeBulb(on = isOn(light, RaceEngine.TreeLight.AMBER2, andAfter = true), color = RaceColors.Amber, size = 26.dp)
+                TreeBulb(on = isOn(light, RaceEngine.TreeLight.AMBER3, andAfter = true), color = RaceColors.Amber, size = 26.dp)
+                TreeBulb(on = light == RaceEngine.TreeLight.GREEN, color = RaceColors.Green, size = 26.dp)
+            }
+        } else {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                TreeBulb(on = isOn(light, RaceEngine.TreeLight.AMBER1, andAfter = true), color = RaceColors.Amber, size = 44.dp)
+                TreeBulb(on = isOn(light, RaceEngine.TreeLight.AMBER2, andAfter = true), color = RaceColors.Amber, size = 44.dp)
+                TreeBulb(on = isOn(light, RaceEngine.TreeLight.AMBER3, andAfter = true), color = RaceColors.Amber, size = 44.dp)
+                TreeBulb(on = light == RaceEngine.TreeLight.GREEN, color = RaceColors.Green, size = 52.dp)
+            }
+        }
+    }
+}
+
+private fun isOn(current: RaceEngine.TreeLight, target: RaceEngine.TreeLight, andAfter: Boolean): Boolean {
+    if (current == target) return true
+    if (!andAfter) return false
+    val order = listOf(
+        RaceEngine.TreeLight.OFF,
+        RaceEngine.TreeLight.AMBER1,
+        RaceEngine.TreeLight.AMBER2,
+        RaceEngine.TreeLight.AMBER3,
+        RaceEngine.TreeLight.GREEN,
+    )
+    val ci = order.indexOf(current)
+    val ti = order.indexOf(target)
+    return ci >= ti && ci != -1 && ti != -1
+}
+
+// ─── Speed cards ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun SpeedCard(
+    label: String,
+    mph: Float,
+    targetMph: Int,
+    tolerance: Int,
+    rolling: Boolean,
+    ready: Boolean,
+    accent: Color,
+    modifier: Modifier = Modifier,
+) {
+    val inWindow = rolling && abs(mph - targetMph) <= tolerance
+    val color by animateColorAsState(
+        if (inWindow) RaceColors.Green else Color.White,
+        label = "speedColor",
+    )
+    RaceSurface(modifier) {
         Column(
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            Modifier.padding(14.dp).fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Bulb(on = active == RaceEngine.TreeLight.AMBER1 || active == RaceEngine.TreeLight.AMBER2 ||
-                active == RaceEngine.TreeLight.AMBER3 || active == RaceEngine.TreeLight.GREEN, color = Color(0xFFFFC107))
-            Bulb(on = active == RaceEngine.TreeLight.AMBER2 || active == RaceEngine.TreeLight.AMBER3 ||
-                active == RaceEngine.TreeLight.GREEN, color = Color(0xFFFFC107))
-            Bulb(on = active == RaceEngine.TreeLight.AMBER3 || active == RaceEngine.TreeLight.GREEN, color = Color(0xFFFFC107))
-            Bulb(on = active == RaceEngine.TreeLight.GREEN, color = Color(0xFF4CAF50))
-            Bulb(on = active == RaceEngine.TreeLight.RED, color = Color(0xFFF44336))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    Modifier
+                        .size(8.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(if (ready) RaceColors.Green else RaceColors.OnSurfaceFaint)
+                )
+                Spacer(Modifier.size(6.dp))
+                Text(label, color = accent, style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (ready) "READY" else "—",
+                    color = if (ready) RaceColors.Green else RaceColors.OnSurfaceFaint,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "%.0f".format(mph),
+                color = color,
+                style = MaterialTheme.typography.displayMedium,
+            )
+            Text("MPH", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            if (rolling) {
+                Spacer(Modifier.height(8.dp))
+                SpeedWindowBar(
+                    mph = mph,
+                    target = targetMph.toFloat(),
+                    tolerance = tolerance.toFloat(),
+                )
+            }
         }
     }
 }
 
+/** A horizontal bar visualizing where current mph sits relative to target±tolerance. */
 @Composable
-private fun Bulb(on: Boolean, color: Color) {
-    val animated by animateColorAsState(
-        targetValue = if (on) color else color.copy(alpha = 0.15f),
-        label = "bulb",
-    )
-    Box(
+private fun SpeedWindowBar(mph: Float, target: Float, tolerance: Float) {
+    val span = (tolerance * 4f).coerceAtLeast(8f) // visible range = ±2*tolerance
+    val pct = ((mph - (target - span)) / (span * 2f)).coerceIn(0f, 1f)
+    val animPct by animateFloatAsState(pct, tween(180), label = "speedPct")
+
+    Canvas(
         Modifier
-            .size(28.dp)
-            .clip(CircleShape)
-            .background(animated),
-    )
+            .fillMaxWidth()
+            .height(10.dp),
+    ) {
+        val w = size.width
+        val h = size.height
+        val r = h / 2f
+        // base track
+        drawRoundRect(
+            color = RaceColors.SurfaceHigh,
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r),
+        )
+        // window band (target ± tolerance)
+        val winLeft = ((target - tolerance) - (target - span)) / (span * 2f) * w
+        val winRight = ((target + tolerance) - (target - span)) / (span * 2f) * w
+        drawRoundRect(
+            color = RaceColors.Green.copy(alpha = 0.25f),
+            topLeft = Offset(winLeft, 0f),
+            size = androidx.compose.ui.geometry.Size((winRight - winLeft).coerceAtLeast(0f), h),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r),
+        )
+        // marker
+        val x = animPct * w
+        drawLine(
+            color = Color.White,
+            start = Offset(x, -2f),
+            end = Offset(x, h + 2f),
+            strokeWidth = 4f,
+            cap = StrokeCap.Round,
+        )
+    }
 }
 
+// ─── Distance panel ──────────────────────────────────────────────────────────
+
 @Composable
-private fun SpeedBlock(state: RaceEngine.State) {
+private fun DistancePanel(state: RaceEngine.State) {
     val cfg = state.config
-    val target = cfg.rollSpeedMph
-    val tol = cfg.speedToleranceMph
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        SpeedCard("YOU", state.selfSpeedMph, target, tol, Modifier.weight(1f))
-        SpeedCard("OPP", state.peerSpeedMph, target, tol, Modifier.weight(1f))
-    }
-    if (state.phase == RaceEngine.Phase.RUNNING || state.phase == RaceEngine.Phase.FINISHED) {
-        Spacer(Modifier.height(12.dp))
-        Column {
-            Text(
-                "Distance: ${"%.0f".format(state.selfDistanceFt)} / ${cfg.distanceFt} ft",
-                color = Color.White, fontWeight = FontWeight.SemiBold,
-            )
-            LinearProgressIndicator(
-                progress = { (state.selfDistanceFt / cfg.distanceFt.toFloat()).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(8.dp).padding(top = 4.dp),
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Elapsed: ${"%.3f".format(state.selfElapsedMs / 1000f)} s",
-                color = Color.White,
-                fontFamily = FontFamily.Monospace,
-            )
+    val pct = (state.selfDistanceFt / cfg.distanceFt.toFloat()).coerceIn(0f, 1f)
+    val animPct by animateFloatAsState(pct, tween(150), label = "distPct")
+    val accent = MaterialTheme.colorScheme.primary
+
+    RaceSurface(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Text("ELAPSED", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "%.3f".format(state.selfElapsedMs / 1000f),
+                        color = Color.White,
+                        style = MaterialTheme.typography.displayMedium,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("DISTANCE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "${state.selfDistanceFt.toInt()} / ${cfg.distanceFt} ft",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            // Progress bar
+            Canvas(Modifier.fillMaxWidth().height(10.dp)) {
+                val w = size.width
+                val h = size.height
+                val r = h / 2f
+                drawRoundRect(
+                    color = RaceColors.SurfaceHigh,
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r),
+                )
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(listOf(accent, RaceColors.AccentSoft)),
+                    size = androidx.compose.ui.geometry.Size(w * animPct, h),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(r, r),
+                )
+            }
         }
     }
-    if (state.phase == RaceEngine.Phase.FINISHED) {
-        Spacer(Modifier.height(8.dp))
-        ResultsBlock(state)
-    }
 }
 
-@Composable
-private fun SpeedCard(label: String, mph: Float, target: Int, tol: Int, modifier: Modifier = Modifier) {
-    val inWindow = kotlin.math.abs(mph - target) <= tol
-    val color = if (inWindow) Color(0xFF4CAF50) else Color.White
-    Column(
-        modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF1A1A1F))
-            .padding(12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(label, color = Color.White.copy(alpha = 0.6f), fontWeight = FontWeight.Bold)
-        Text(
-            "%.0f".format(mph),
-            color = color,
-            fontSize = 56.sp,
-            fontWeight = FontWeight.Black,
-            fontFamily = FontFamily.Monospace,
-        )
-        Text("mph", color = Color.White.copy(alpha = 0.6f))
-    }
-}
+// ─── Results ─────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ResultsBlock(state: RaceEngine.State) {
+private fun ResultsCard(state: RaceEngine.State) {
     val self = state.selfFinishMs ?: return
     val peer = state.peerFinishMs ?: return
     val won = self < peer
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (won) Color(0xFF1B3A1B) else Color(0xFF3A1B1B))
-            .padding(16.dp),
-    ) {
+    val accent = if (won) RaceColors.Green else MaterialTheme.colorScheme.error
+
+    RaceSurface(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(20.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                if (won) "WIN" else "LOSS",
+                color = accent,
+                fontWeight = FontWeight.Black,
+                fontSize = 56.sp,
+                letterSpacing = 4.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                ResultColumn("YOU", self, state.selfFinalMph, color = MaterialTheme.colorScheme.primary)
+                ResultColumn("OPP", peer, state.peerFinalMph, color = RaceColors.Blue)
+            }
+            Spacer(Modifier.height(10.dp))
+            val margin = (peer - self) / 1000f
+            Text(
+                "MARGIN ${"%+.3f".format(margin)} s",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ResultColumn(label: String, ms: Long, mph: Float, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = color, style = MaterialTheme.typography.labelMedium)
         Text(
-            if (won) "WIN" else "LOSS",
-            color = if (won) Color(0xFF8BC34A) else Color(0xFFEF5350),
-            fontWeight = FontWeight.Black,
-            fontSize = 32.sp,
+            "%.3f".format(ms / 1000f),
+            color = Color.White,
+            style = MaterialTheme.typography.headlineLarge,
         )
-        Spacer(Modifier.height(8.dp))
         Text(
-            "You: ${"%.3f".format(self / 1000f)} s @ ${"%.0f".format(state.selfFinalMph)} mph",
-            color = Color.White, fontFamily = FontFamily.Monospace,
-        )
-        Text(
-            "Opp: ${"%.3f".format(peer / 1000f)} s @ ${"%.0f".format(state.peerFinalMph)} mph",
-            color = Color.White, fontFamily = FontFamily.Monospace,
-        )
-        val margin = (peer - self) / 1000f
-        Text(
-            "Margin: ${"%+.3f".format(margin)} s",
-            color = Color.White.copy(alpha = 0.7f),
-            fontFamily = FontFamily.Monospace,
+            "${"%.0f".format(mph)} MPH",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium,
         )
     }
 }
+
+// ─── Bottom controls ─────────────────────────────────────────────────────────
 
 @Composable
 private fun BottomControls(
@@ -232,25 +429,48 @@ private fun BottomControls(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { onReady(!state.selfReady) },
-                    modifier = Modifier.weight(1f),
-                ) { Text(if (state.selfReady) "Cancel ready" else "I'm ready") }
-                OutlinedButton(onClick = onAbort, modifier = Modifier.width(120.dp)) { Text("Abort") }
+                    modifier = Modifier.weight(1f).height(56.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = if (state.selfReady) ButtonDefaults.buttonColors(
+                        containerColor = RaceColors.Green, contentColor = Color.Black,
+                    ) else ButtonDefaults.buttonColors(),
+                ) {
+                    Icon(if (state.selfReady) Icons.Default.CheckCircle else Icons.Default.Bolt,
+                        null, Modifier.size(20.dp))
+                    Spacer(Modifier.size(8.dp))
+                    Text(if (state.selfReady) "READY" else "I'M READY",
+                        fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                }
+                OutlinedButton(
+                    onClick = onAbort,
+                    modifier = Modifier.height(56.dp),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Icon(Icons.Default.Cancel, null, Modifier.size(20.dp))
+                }
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "You: ${if (state.selfReady) "READY" else "—"}     Opp: ${if (state.peerReady) "READY" else "—"}",
-                color = Color.White,
-            )
         }
         RaceEngine.Phase.FINISHED, RaceEngine.Phase.ABORTED -> {
-            Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+            Button(
+                onClick = onDone,
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(14.dp),
+            ) { Text("DONE", fontWeight = FontWeight.Black, letterSpacing = 1.sp) }
             state.message?.let {
                 Spacer(Modifier.height(8.dp))
-                Text(it, color = Color.White.copy(alpha = 0.7f))
+                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         else -> {
-            OutlinedButton(onClick = onAbort, modifier = Modifier.fillMaxWidth()) { Text("Abort") }
+            OutlinedButton(
+                onClick = onAbort,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Icon(Icons.Default.Cancel, null, Modifier.size(18.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("Abort")
+            }
         }
     }
 }

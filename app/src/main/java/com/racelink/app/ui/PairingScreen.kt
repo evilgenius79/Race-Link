@@ -11,25 +11,33 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.racelink.app.bluetooth.BluetoothLink
+import com.racelink.app.ui.theme.RaceColors
 
 @Composable
 fun PairingScreen(
@@ -45,85 +53,171 @@ fun PairingScreen(
     onContinue: () -> Unit,
     onBack: () -> Unit,
 ) {
-    Column(
-        Modifier.fillMaxSize().padding(16.dp),
-    ) {
-        Text("Pair with another driver", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            when (state) {
-                BluetoothLink.ConnState.IDLE -> "Idle"
-                BluetoothLink.ConnState.LISTENING -> "Waiting for incoming connection..."
-                BluetoothLink.ConnState.DISCOVERING -> "Scanning for nearby cars..."
-                BluetoothLink.ConnState.CONNECTING -> "Connecting..."
-                BluetoothLink.ConnState.CONNECTED -> "Connected to ${peer?.name ?: peer?.address ?: "peer"}"
-                BluetoothLink.ConnState.ERROR -> "Error - try again"
-            },
-            color = MaterialTheme.colorScheme.secondary,
-        )
-        Spacer(Modifier.height(16.dp))
+    ScreenBackground {
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            TopBar(title = "PAIR", onBack = onBack)
 
-        if (state == BluetoothLink.ConnState.CONNECTED) {
-            Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
-                Text("Continue to race setup")
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
-                Text("Disconnect")
-            }
-        } else {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = if (state == BluetoothLink.ConnState.DISCOVERING) onStopScan else onScan,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(if (state == BluetoothLink.ConnState.DISCOVERING) "Stop scan" else "Scan")
-                }
-                Button(onClick = onHost, modifier = Modifier.weight(1f)) {
-                    Text(if (state == BluetoothLink.ConnState.LISTENING) "Hosting..." else "Host")
-                }
-            }
+            // Status header with big readable state
+            ConnectionHeader(state = state, peer = peer)
+
             Spacer(Modifier.height(16.dp))
-            if (state == BluetoothLink.ConnState.CONNECTING ||
-                state == BluetoothLink.ConnState.LISTENING ||
-                state == BluetoothLink.ConnState.DISCOVERING
-            ) {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-                Spacer(Modifier.height(16.dp))
-            }
 
-            if (bonded.isNotEmpty()) {
-                Text("Paired devices", fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(4.dp))
-                Card(Modifier.fillMaxWidth()) {
-                    Column {
-                        bonded.forEachIndexed { i, d ->
-                            DeviceRow(d, onClick = { onConnect(d) })
-                            if (i < bonded.size - 1) Divider()
-                        }
+            if (state == BluetoothLink.ConnState.CONNECTED) {
+                Button(
+                    onClick = onContinue,
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(14.dp),
+                ) { Text("Continue to race setup", style = MaterialTheme.typography.labelLarge) }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onDisconnect,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(14.dp),
+                ) { Text("Disconnect") }
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = if (state == BluetoothLink.ConnState.DISCOVERING) onStopScan else onScan,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = Color.White,
+                        ),
+                    ) {
+                        Icon(Icons.Default.Search, null, Modifier.size(18.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text(if (state == BluetoothLink.ConnState.DISCOVERING) "Stop" else "Scan")
+                    }
+                    Button(
+                        onClick = onHost,
+                        modifier = Modifier.weight(1f).height(52.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Icon(Icons.Default.Wifi, null, Modifier.size(18.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text(if (state == BluetoothLink.ConnState.LISTENING) "Hosting…" else "Host")
                     }
                 }
-                Spacer(Modifier.height(16.dp))
-            }
 
-            Text("Nearby", fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            if (discovered.isEmpty()) {
-                Text("No devices yet. Tap Scan.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-            } else {
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(discovered) { d ->
-                        DeviceRow(d, onClick = { onConnect(d) })
-                        Divider()
+                Spacer(Modifier.height(20.dp))
+
+                if (bonded.isNotEmpty()) {
+                    SectionHeader("PAIRED DEVICES")
+                    Spacer(Modifier.height(8.dp))
+                    RaceSurface(Modifier.fillMaxWidth()) {
+                        Column {
+                            bonded.forEachIndexed { i, d ->
+                                DeviceRow(d, onClick = { onConnect(d) })
+                                if (i < bonded.lastIndex) Box(
+                                    Modifier.fillMaxWidth().height(1.dp).background(RaceColors.Outline)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(20.dp))
+                }
+
+                SectionHeader("NEARBY")
+                Spacer(Modifier.height(8.dp))
+                if (discovered.isEmpty()) {
+                    RaceSurface(Modifier.fillMaxWidth()) {
+                        Box(
+                            Modifier.fillMaxWidth().padding(20.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                if (state == BluetoothLink.ConnState.DISCOVERING)
+                                    "Searching for nearby cars…"
+                                else "Tap Scan to look for nearby cars",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                } else {
+                    RaceSurface(Modifier.fillMaxWidth()) {
+                        LazyColumn {
+                            items(discovered) { d ->
+                                DeviceRow(d, onClick = { onConnect(d) })
+                                Box(Modifier.fillMaxWidth().height(1.dp).background(RaceColors.Outline))
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(8.dp))
-        TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back") }
+@Composable
+private fun TopBar(title: String, onBack: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+        }
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White,
+        )
+    }
+}
+
+@Composable
+private fun ConnectionHeader(
+    state: BluetoothLink.ConnState,
+    peer: BluetoothLink.DiscoveredDevice?,
+) {
+    val (label, color, busy) = when (state) {
+        BluetoothLink.ConnState.IDLE -> Triple("READY", RaceColors.OnSurfaceMuted, false)
+        BluetoothLink.ConnState.LISTENING -> Triple("HOSTING", MaterialTheme.colorScheme.secondary, true)
+        BluetoothLink.ConnState.DISCOVERING -> Triple("SCANNING", MaterialTheme.colorScheme.secondary, true)
+        BluetoothLink.ConnState.CONNECTING -> Triple("CONNECTING", MaterialTheme.colorScheme.secondary, true)
+        BluetoothLink.ConnState.CONNECTED -> Triple("CONNECTED", RaceColors.Green, false)
+        BluetoothLink.ConnState.ERROR -> Triple("ERROR", MaterialTheme.colorScheme.error, false)
+    }
+
+    RaceSurface(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.padding(16.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(color.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Default.Bluetooth, null, tint = color)
+            }
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(label, color = color, style = MaterialTheme.typography.labelLarge)
+                Text(
+                    when (state) {
+                        BluetoothLink.ConnState.CONNECTED ->
+                            peer?.name ?: peer?.address ?: "Peer"
+                        BluetoothLink.ConnState.LISTENING -> "Waiting for someone to connect"
+                        BluetoothLink.ConnState.DISCOVERING -> "Looking for nearby Race Link phones"
+                        else -> "Choose Scan or Host below"
+                    },
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            }
+            if (busy) {
+                CircularProgressIndicator(
+                    Modifier.size(24.dp),
+                    color = color,
+                    strokeWidth = 3.dp,
+                )
+            }
+        }
     }
 }
 
@@ -132,21 +226,36 @@ private fun DeviceRow(d: BluetoothLink.DiscoveredDevice, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
             .clickable { onClick() }
-            .padding(12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             Modifier
-                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(50))
-                .padding(8.dp)
-        ) { Text("BT", color = MaterialTheme.colorScheme.onPrimary, fontSize = 10.sp) }
-        Spacer(Modifier.height(0.dp))
-        Column(Modifier.padding(start = 12.dp).weight(1f)) {
-            Text(d.name ?: "(unnamed)", fontWeight = FontWeight.SemiBold)
-            Text(d.address, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Default.Bluetooth, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
         }
-        Text("Connect", color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.size(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                d.name ?: "Unnamed device",
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Text(
+                d.address,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        Icon(
+            Icons.Default.ChevronRight,
+            null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
