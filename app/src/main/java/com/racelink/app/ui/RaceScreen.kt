@@ -32,7 +32,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,10 +43,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.racelink.app.race.RaceEngine
+import com.racelink.app.race.RaceFeedback
 import com.racelink.app.race.StartType
 import com.racelink.app.ui.theme.RaceColors
 import kotlin.math.abs
@@ -51,10 +57,43 @@ import kotlin.math.abs
 @Composable
 fun RaceScreen(
     state: RaceEngine.State,
+    selfName: String,
+    peerName: String?,
     onReady: (Boolean) -> Unit,
     onAbort: () -> Unit,
     onDone: () -> Unit,
 ) {
+    // Keep the screen on while we're actively racing - the phone may sit
+    // on the dash for several minutes during arming.
+    val view = LocalView.current
+    val activePhases = setOf(
+        RaceEngine.Phase.ARMED, RaceEngine.Phase.STAGED,
+        RaceEngine.Phase.TREE, RaceEngine.Phase.RUNNING,
+    )
+    DisposableEffect(state.phase) {
+        view.keepScreenOn = state.phase in activePhases
+        onDispose { view.keepScreenOn = false }
+    }
+
+    // Audio + haptic for the tree.
+    val context = LocalContext.current
+    val feedback = remember { RaceFeedback(context) }
+    DisposableEffect(Unit) {
+        onDispose { feedback.release() }
+    }
+    LaunchedEffect(state.light) {
+        when (state.light) {
+            RaceEngine.TreeLight.AMBER1,
+            RaceEngine.TreeLight.AMBER2,
+            RaceEngine.TreeLight.AMBER3 -> feedback.amber()
+            RaceEngine.TreeLight.GREEN -> feedback.green()
+            else -> { /* no feedback */ }
+        }
+    }
+    LaunchedEffect(state.phase) {
+        if (state.phase == RaceEngine.Phase.FINISHED) feedback.finish()
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -96,23 +135,35 @@ fun RaceScreen(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                SpeedCard("YOU", state.selfSpeedMph, targetMph = state.config.rollSpeedMph,
+                SpeedCard(
+                    label = selfName.ifBlank { "YOU" }.uppercase(),
+                    mph = state.selfSpeedMph,
+                    targetMph = state.config.rollSpeedMph,
                     tolerance = state.config.speedToleranceMph,
                     rolling = state.config.startType == StartType.ROLLING,
                     ready = state.selfReady,
                     accent = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f))
-                SpeedCard("OPP", state.peerSpeedMph, targetMph = state.config.rollSpeedMph,
+                    modifier = Modifier.weight(1f),
+                )
+                SpeedCard(
+                    label = (peerName ?: "OPP").uppercase(),
+                    mph = state.peerSpeedMph,
+                    targetMph = state.config.rollSpeedMph,
                     tolerance = state.config.speedToleranceMph,
                     rolling = state.config.startType == StartType.ROLLING,
                     ready = state.peerReady,
                     accent = RaceColors.Blue,
-                    modifier = Modifier.weight(1f))
+                    modifier = Modifier.weight(1f),
+                )
             }
 
             if (state.phase == RaceEngine.Phase.FINISHED) {
                 Spacer(Modifier.height(12.dp))
-                ResultsCard(state)
+                ResultsCard(state, selfName, peerName)
+                if (state.splits.isNotEmpty() || state.reactionMs != null) {
+                    Spacer(Modifier.height(8.dp))
+                    SplitsCard(state)
+                }
             }
 
             Spacer(Modifier.weight(1f))
@@ -361,7 +412,7 @@ private fun DistancePanel(state: RaceEngine.State) {
 // ─── Results ─────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ResultsCard(state: RaceEngine.State) {
+private fun ResultsCard(state: RaceEngine.State, selfName: String, peerName: String?) {
     val self = state.selfFinishMs ?: return
     val peer = state.peerFinishMs ?: return
     val won = self < peer
@@ -384,8 +435,16 @@ private fun ResultsCard(state: RaceEngine.State) {
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                ResultColumn("YOU", self, state.selfFinalMph, color = MaterialTheme.colorScheme.primary)
-                ResultColumn("OPP", peer, state.peerFinalMph, color = RaceColors.Blue)
+                ResultColumn(
+                    label = selfName.ifBlank { "YOU" }.uppercase(),
+                    ms = self, mph = state.selfFinalMph,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                ResultColumn(
+                    label = (peerName ?: "OPP").uppercase(),
+                    ms = peer, mph = state.peerFinalMph,
+                    color = RaceColors.Blue,
+                )
             }
             Spacer(Modifier.height(10.dp))
             val margin = (peer - self) / 1000f
@@ -395,6 +454,62 @@ private fun ResultsCard(state: RaceEngine.State) {
                 style = MaterialTheme.typography.labelLarge,
             )
         }
+    }
+}
+
+/** Split times + reaction time, shown below the win/loss card after a run. */
+@Composable
+private fun SplitsCard(state: RaceEngine.State) {
+    RaceSurface(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp).fillMaxWidth()) {
+            Text(
+                "RUN DETAIL",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            state.reactionMs?.let { rt ->
+                SplitRow("REACTION", "%.3f s".format(rt / 1000f))
+            }
+            // Splits in increasing distance order
+            state.splits.entries.sortedBy { it.key }.forEach { (ft, ms) ->
+                SplitRow(splitLabel(ft), "%.3f s".format(ms / 1000f))
+            }
+            // Final ET goes at the bottom for completeness
+            state.selfFinishMs?.let { fin ->
+                SplitRow(distanceLabel(state.config.distanceFt), "%.3f s".format(fin / 1000f), bold = true)
+            }
+        }
+    }
+}
+
+private fun splitLabel(ft: Int): String = when (ft) {
+    60 -> "60 FT"
+    330 -> "330 FT"
+    660 -> "1/8 MI"
+    1000 -> "1000 FT"
+    1320 -> "1/4 MI"
+    else -> "$ft FT"
+}
+
+@Composable
+private fun SplitRow(label: String, value: String, bold: Boolean = false) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            value,
+            color = if (bold) Color.White else MaterialTheme.colorScheme.onSurface,
+            style = if (bold) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyLarge,
+            fontWeight = if (bold) FontWeight.Black else FontWeight.SemiBold,
+        )
     }
 }
 

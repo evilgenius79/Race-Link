@@ -72,6 +72,10 @@ class RaceEngine(
         val selfFinalMph: Float = 0f,
         val peerFinishMs: Long? = null,
         val peerFinalMph: Float = 0f,
+        /** Time from green-fire until our car began accelerating (ms). */
+        val reactionMs: Long? = null,
+        /** Map of distance-ft -> elapsed-ms for split markers we crossed. */
+        val splits: Map<Int, Long> = emptyMap(),
         val message: String? = null,
     )
 
@@ -238,6 +242,12 @@ class RaceEngine(
     private fun startDistanceIntegration(greenAtLocalMillis: Long) {
         distanceJob?.cancel()
         lastLoc = null
+        // Speed at the moment the green fires - used as the baseline for
+        // reaction-time. For standing this is ~0; for rolling it's roll speed.
+        val startSpeed = _state.value.selfSpeedMph
+        // Splits we care about, sorted - any that exceed the race distance
+        // will simply never fire.
+        val splitMarks = SPLIT_MARKERS_FT.filter { it < _state.value.config.distanceFt }
         distanceJob = scope.launch {
             val cfg = _state.value.config
             val targetFt = cfg.distanceFt.toFloat()
@@ -247,22 +257,47 @@ class RaceEngine(
                     sample ?: return@onEach
                     val loc = sample.location
                     val prev = lastLoc
+                    val nowMph = if (loc.hasSpeed()) loc.speed * SpeedTracker.MS_TO_MPH
+                                 else _state.value.selfSpeedMph
+                    val elapsedNow = System.currentTimeMillis() - greenAtLocalMillis
+
+                    // Reaction time: first sample after green where speed
+                    // exceeds the start speed by REACTION_THRESHOLD_MPH.
+                    if (_state.value.reactionMs == null && elapsedNow >= 0 &&
+                        nowMph - startSpeed >= REACTION_THRESHOLD_MPH) {
+                        _state.update { it.copy(reactionMs = elapsedNow) }
+                    }
+
                     if (prev != null) {
                         val deltaMeters = prev.distanceTo(loc)
                         val deltaFt = deltaMeters * METERS_TO_FT
-                        val newDist = _state.value.selfDistanceFt + deltaFt
-                        val elapsed = System.currentTimeMillis() - greenAtLocalMillis
-                        _state.update { it.copy(selfDistanceFt = newDist, selfElapsedMs = elapsed) }
+                        val prevDist = _state.value.selfDistanceFt
+                        val newDist = prevDist + deltaFt
+                        _state.update { it.copy(selfDistanceFt = newDist, selfElapsedMs = elapsedNow) }
+
+                        // Splits: each marker crossed inside this segment
+                        // gets an interpolated elapsed time.
+                        val segMs = sample.elapsedRealtimeMillis -
+                            (lastSampleElapsed ?: sample.elapsedRealtimeMillis)
+                        val crossed = splitMarks.filter { it.toFloat() in prevDist..newDist }
+                        if (crossed.isNotEmpty()) {
+                            val splits = _state.value.splits.toMutableMap()
+                            crossed.forEach { mark ->
+                                if (mark !in splits) {
+                                    val frac = ((mark - prevDist) / deltaFt).coerceIn(0f, 1f)
+                                    val crossWall = sample.wallClockMillis -
+                                        ((1f - frac) * segMs).toLong()
+                                    splits[mark] = crossWall - greenAtLocalMillis
+                                }
+                            }
+                            _state.update { it.copy(splits = splits) }
+                        }
+
                         if (newDist >= targetFt && _state.value.selfFinishMs == null) {
-                            // Linearly interpolate finish time across this segment
-                            val prevDist = newDist - deltaFt
                             val frac = ((targetFt - prevDist) / deltaFt).coerceIn(0f, 1f)
-                            val segMs = sample.elapsedRealtimeMillis -
-                                (lastSampleElapsed ?: sample.elapsedRealtimeMillis)
                             val finishWall = sample.wallClockMillis - ((1f - frac) * segMs).toLong()
                             val finishElapsed = finishWall - greenAtLocalMillis
-                            val mph = if (loc.hasSpeed()) loc.speed * SpeedTracker.MS_TO_MPH else _state.value.selfSpeedMph
-                            onSelfFinish(finishElapsed, mph)
+                            onSelfFinish(finishElapsed, nowMph)
                         }
                     }
                     lastSampleElapsed = sample.elapsedRealtimeMillis
@@ -316,5 +351,9 @@ class RaceEngine(
 
     companion object {
         const val METERS_TO_FT = 3.28084f
+        /** Speed change above the green-fire baseline that counts as "go". */
+        const val REACTION_THRESHOLD_MPH = 1.5f
+        /** Distance markers (ft) at which we capture interval times. */
+        val SPLIT_MARKERS_FT = listOf(60, 330, 660, 1000)
     }
 }

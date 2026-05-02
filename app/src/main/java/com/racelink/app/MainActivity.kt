@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.racelink.app.race.RaceEngine
 import com.racelink.app.ui.HomeScreen
 import com.racelink.app.ui.InboundRequestDialog
+import com.racelink.app.ui.NicknameDialog
 import com.racelink.app.ui.PairingScreen
 import com.racelink.app.ui.RaceConfigScreen
 import com.racelink.app.ui.RaceScreen
@@ -106,7 +107,15 @@ private fun AppRoot(vm: AppViewModel) {
     val linkState by vm.link.state.collectAsState()
     val discovered by vm.link.discovered.collectAsState()
     val peer by vm.link.peer.collectAsState()
+    val peerNickname by vm.link.peerNickname.collectAsState()
     val lastConfig by vm.lastConfig.collectAsState()
+    val nickname by vm.nickname.collectAsState()
+
+    // First-launch nickname prompt: appears once tutorial is dismissed.
+    var showNicknameDialog by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(screen, nickname) {
+        if (screen == Screen.HOME && nickname.isBlank()) showNicknameDialog = true
+    }
 
     // Auto-jump to race screen as soon as the engine is armed
     LaunchedEffect(raceState.phase) {
@@ -126,9 +135,11 @@ private fun AppRoot(vm: AppViewModel) {
             Screen.HOME -> HomeScreen(
                 btReady = hasBt,
                 locReady = hasLoc,
+                nickname = nickname,
                 onPair = { screen = Screen.PAIRING },
                 onRequestPermissions = askPerms,
                 onShowTutorial = { screen = Screen.TUTORIAL },
+                onEditNickname = { showNicknameDialog = true },
             )
             Screen.PAIRING -> PairingScreen(
                 state = linkState,
@@ -152,6 +163,8 @@ private fun AppRoot(vm: AppViewModel) {
             )
             Screen.RACE -> RaceScreen(
                 state = raceState,
+                selfName = nickname,
+                peerName = peerNickname,
                 onReady = { vm.engine.setReady(it) },
                 onAbort = { vm.engine.abort("user aborted") },
                 onDone = {
@@ -164,8 +177,21 @@ private fun AppRoot(vm: AppViewModel) {
         pendingInbound?.let { cfg ->
             InboundRequestDialog(
                 config = cfg,
+                fromName = peerNickname,
                 onAccept = { vm.acceptInbound() },
                 onDecline = { vm.declineInbound() },
+            )
+        }
+
+        if (showNicknameDialog) {
+            NicknameDialog(
+                initial = nickname,
+                canDismiss = nickname.isNotBlank(),
+                onSave = {
+                    vm.setNickname(it)
+                    showNicknameDialog = false
+                },
+                onDismiss = { showNicknameDialog = false },
             )
         }
     }

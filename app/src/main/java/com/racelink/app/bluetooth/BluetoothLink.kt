@@ -60,6 +60,13 @@ class BluetoothLink(private val appContext: Context) {
     private val _peer = MutableStateFlow<DiscoveredDevice?>(null)
     val peer: StateFlow<DiscoveredDevice?> = _peer.asStateFlow()
 
+    /** Peer-supplied nickname, set when we receive their Hello after connect. */
+    private val _peerNickname = MutableStateFlow<String?>(null)
+    val peerNickname: StateFlow<String?> = _peerNickname.asStateFlow()
+
+    /** Our own nickname - sent in Hello as soon as a socket comes up. */
+    var selfNickname: String = ""
+
     private val _incoming = MutableSharedFlow<Message>(extraBufferCapacity = 64)
     val incoming: SharedFlow<Message> = _incoming.asSharedFlow()
 
@@ -224,7 +231,10 @@ class BluetoothLink(private val appContext: Context) {
         val remote = s.remoteDevice
         val name = try { remote.name } catch (_: SecurityException) { null }
         _peer.value = DiscoveredDevice(name, remote.address)
+        _peerNickname.value = null
         ioJob = scope.launch { readLoop(s) }
+        // Greet the peer with our nickname so they can show it in the UI.
+        send(Message.Hello(selfNickname.ifBlank { "Driver" }, APP_VERSION))
     }
 
     private suspend fun readLoop(s: BluetoothSocket) {
@@ -232,7 +242,11 @@ class BluetoothLink(private val appContext: Context) {
             val reader = BufferedReader(InputStreamReader(s.inputStream, Charsets.UTF_8))
             while (true) {
                 val line = reader.readLine() ?: break
-                Message.decode(line)?.let { _incoming.emit(it) }
+                val msg = Message.decode(line) ?: continue
+                if (msg is Message.Hello) {
+                    _peerNickname.value = msg.name.ifBlank { null }
+                }
+                _incoming.emit(msg)
             }
         } catch (e: IOException) {
             Log.i(TAG, "read loop ended", e)
@@ -277,6 +291,7 @@ class BluetoothLink(private val appContext: Context) {
 
     companion object {
         private const val TAG = "BluetoothLink"
+        private const val APP_VERSION = "0.2.0"
         // SPP-style UUID, but app-specific so we don't collide with audio devices.
         // If you fork the app and want to talk only to your own builds, change this.
         val SERVICE_UUID: UUID = UUID.fromString("8b6e3c8a-1f44-4f5c-9c5c-1e2bd2e3ab51")

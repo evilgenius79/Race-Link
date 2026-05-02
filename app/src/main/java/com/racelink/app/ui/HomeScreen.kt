@@ -1,6 +1,7 @@
 package com.racelink.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FlagCircle
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.RadioButtonChecked
@@ -39,9 +41,11 @@ import com.racelink.app.ui.theme.RaceColors
 fun HomeScreen(
     btReady: Boolean,
     locReady: Boolean,
+    nickname: String,
     onPair: () -> Unit,
     onRequestPermissions: () -> Unit,
     onShowTutorial: () -> Unit = {},
+    onEditNickname: () -> Unit = {},
 ) {
     ScreenBackground {
         Column(
@@ -67,6 +71,29 @@ fun HomeScreen(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
+                if (nickname.isNotBlank()) {
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { onEditNickname() }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            nickname.uppercase(),
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Icon(
+                            Icons.Default.Edit, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
             }
 
             // Status pills

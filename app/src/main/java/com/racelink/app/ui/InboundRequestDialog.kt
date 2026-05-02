@@ -37,6 +37,7 @@ import com.racelink.app.ui.theme.RaceColors
 @Composable
 fun InboundRequestDialog(
     config: RaceConfig,
+    fromName: String?,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
 ) {
@@ -71,7 +72,9 @@ fun InboundRequestDialog(
                             style = MaterialTheme.typography.labelMedium,
                         )
                         Text(
-                            "Another driver wants to race",
+                            if (!fromName.isNullOrBlank())
+                                "${fromName.uppercase()} wants to race"
+                            else "Another driver wants to race",
                             color = Color.White,
                             style = MaterialTheme.typography.titleLarge,
                         )

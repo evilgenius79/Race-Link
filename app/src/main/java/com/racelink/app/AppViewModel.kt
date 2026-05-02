@@ -19,10 +19,21 @@ import kotlinx.coroutines.flow.update
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
-    val link = BluetoothLink(app)
+    val prefs = AppPrefs(app)
+    val link = BluetoothLink(app).also { it.selfNickname = prefs.nickname }
     val tracker = SpeedTracker(app)
     private val clockSync = ClockSync(link, viewModelScope)
     val engine = RaceEngine(link, tracker, clockSync, viewModelScope)
+
+    private val _nickname = MutableStateFlow(prefs.nickname)
+    val nickname: StateFlow<String> = _nickname.asStateFlow()
+
+    fun setNickname(name: String) {
+        val trimmed = name.trim().take(20)
+        prefs.nickname = trimmed
+        link.selfNickname = trimmed
+        _nickname.value = trimmed
+    }
 
     /** Pending inbound race request (we are the guest), waiting for accept/deny. */
     private val _pendingInbound = MutableStateFlow<RaceConfig?>(null)
