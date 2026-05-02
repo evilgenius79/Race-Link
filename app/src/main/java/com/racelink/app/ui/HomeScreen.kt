@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.FlagCircle
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.RadioButtonChecked
@@ -46,6 +47,7 @@ fun HomeScreen(
     onRequestPermissions: () -> Unit,
     onShowTutorial: () -> Unit = {},
     onEditNickname: () -> Unit = {},
+    onShowHistory: () -> Unit = {},
 ) {
     ScreenBackground {
         Column(
@@ -144,14 +146,33 @@ fun HomeScreen(
                         Text("Wait for incoming challenge")
                     }
                 }
-                TextButton(onClick = onShowTutorial, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.HelpOutline, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.size(8.dp))
-                    Text(
-                        "How to use",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelLarge,
-                    )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    TextButton(onClick = onShowHistory) {
+                        Icon(
+                            Icons.Default.EmojiEvents, null,
+                            Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Text(
+                            "History",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                    TextButton(onClick = onShowTutorial) {
+                        Icon(
+                            Icons.Default.HelpOutline, null,
+                            Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Text(
+                            "How to use",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
                 }
             }
 

@@ -9,13 +9,16 @@ import com.racelink.app.location.SpeedTracker
 import com.racelink.app.race.ClockSync
 import com.racelink.app.race.RaceConfig
 import com.racelink.app.race.RaceEngine
+import com.racelink.app.race.RaceHistoryStore
+import com.racelink.app.race.RaceResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -24,6 +27,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val tracker = SpeedTracker(app)
     private val clockSync = ClockSync(link, viewModelScope)
     val engine = RaceEngine(link, tracker, clockSync, viewModelScope)
+    val history = RaceHistoryStore(app)
 
     private val _nickname = MutableStateFlow(prefs.nickname)
     val nickname: StateFlow<String> = _nickname.asStateFlow()
@@ -64,7 +68,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .onEach { resp ->
                 _outboundPending.value = false
                 if (resp.accepted) {
-                    tracker.start()
+                    onRaceStarting()
                     engine.start(isHost = true, config = _lastConfig.value)
                 } else {
                     _toast.value = "Race declined"
@@ -75,6 +79,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         link.errors
             .onEach { _toast.value = it }
             .launchIn(viewModelScope)
+
+        // Service lifecycle: keep the foreground service alive while a race
+        // is being arranged or in progress; stop it once the engine is idle.
+        engine.state
+            .distinctUntilChangedBy { it.phase }
+            .onEach { s ->
+                val active = s.phase in ACTIVE_PHASES
+                if (active) RaceForegroundService.start(app)
+                else RaceForegroundService.stop(app)
+            }
+            .launchIn(viewModelScope)
+
+        // Save a result the first time the engine reports both finish times.
+        engine.state
+            .distinctUntilChangedBy { it.selfFinishMs to it.peerFinishMs }
+            .onEach { s ->
+                if (s.phase == RaceEngine.Phase.FINISHED && s.selfFinishMs != null && s.peerFinishMs != null) {
+                    persistResult(s)
+                }
+            }
+            .launchIn(viewModelScope)
+    }
+
+    private fun onRaceStarting() {
+        if (tracker.hasPermission()) tracker.start()
     }
 
     fun startTrackerIfPossible() {
@@ -91,7 +120,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val cfg = _pendingInbound.value ?: return
         _pendingInbound.value = null
         link.send(Message.RaceResponse(true))
-        tracker.start()
+        onRaceStarting()
         engine.start(isHost = false, config = cfg)
     }
 
@@ -111,10 +140,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tracker.stop()
     }
 
+    fun loadHistory(): List<RaceResult> = history.loadAll()
+
+    fun clearHistory() {
+        viewModelScope.launch { history.clear() }
+    }
+
+    private var lastSavedFinish: Long? = null
+    private fun persistResult(s: RaceEngine.State) {
+        val selfMs = s.selfFinishMs ?: return
+        val peerMs = s.peerFinishMs ?: return
+        // Defensive dedupe in case the flow re-emits.
+        if (lastSavedFinish == selfMs) return
+        lastSavedFinish = selfMs
+        viewModelScope.launch {
+            history.save(
+                RaceResult(
+                    timestampMs = System.currentTimeMillis(),
+                    peerName = link.peerNickname.value,
+                    startType = s.config.startType,
+                    rollSpeedMph = s.config.rollSpeedMph,
+                    distanceFt = s.config.distanceFt,
+                    selfEtMs = selfMs,
+                    selfMph = s.selfFinalMph,
+                    peerEtMs = peerMs,
+                    peerMph = s.peerFinalMph,
+                    reactionMs = s.reactionMs,
+                    won = selfMs < peerMs,
+                    splits = s.splits,
+                )
+            )
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         engine.reset()
         tracker.stop()
         link.shutdown()
+        RaceForegroundService.stop(getApplication())
+    }
+
+    private companion object {
+        val ACTIVE_PHASES = setOf(
+            RaceEngine.Phase.ARMED,
+            RaceEngine.Phase.STAGED,
+            RaceEngine.Phase.TREE,
+            RaceEngine.Phase.RUNNING,
+        )
     }
 }

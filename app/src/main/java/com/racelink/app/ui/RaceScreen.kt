@@ -108,6 +108,17 @@ fun RaceScreen(
         ) {
             Spacer(Modifier.height(12.dp))
             TopHud(state)
+            // Live status banner (e.g. reconnect attempt) - distinct from the
+            // post-race state.message which shows under the Done button.
+            if (state.message != null && state.phase != RaceEngine.Phase.FINISHED
+                && state.phase != RaceEngine.Phase.ABORTED) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    state.message,
+                    color = MaterialTheme.colorScheme.secondary,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
             Spacer(Modifier.height(16.dp))
 
             // The visual stage swaps based on phase: pre-race we show a big tree,

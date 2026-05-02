@@ -24,6 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.racelink.app.race.RaceEngine
+import com.racelink.app.ui.HistoryScreen
 import com.racelink.app.ui.HomeScreen
 import com.racelink.app.ui.InboundRequestDialog
 import com.racelink.app.ui.NicknameDialog
@@ -55,7 +56,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { TUTORIAL, HOME, PAIRING, CONFIG, RACE }
+private enum class Screen { TUTORIAL, HOME, PAIRING, CONFIG, RACE, HISTORY }
 
 @Composable
 private fun AppRoot(vm: AppViewModel) {
@@ -87,6 +88,12 @@ private fun AppRoot(vm: AppViewModel) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             perms += Manifest.permission.BLUETOOTH_SCAN
             perms += Manifest.permission.BLUETOOTH_CONNECT
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Required to actually show the foreground-service notification
+            // on Android 13+. The service still runs without it, but the
+            // ongoing notification is what convinces the OS to keep us alive.
+            perms += Manifest.permission.POST_NOTIFICATIONS
         }
         permLauncher.launch(perms.toTypedArray())
     }
@@ -140,7 +147,18 @@ private fun AppRoot(vm: AppViewModel) {
                 onRequestPermissions = askPerms,
                 onShowTutorial = { screen = Screen.TUTORIAL },
                 onEditNickname = { showNicknameDialog = true },
+                onShowHistory = { screen = Screen.HISTORY },
             )
+            Screen.HISTORY -> {
+                // Re-read history each time we land on this screen so a
+                // race that just finished is visible immediately.
+                val results = remember(screen) { vm.loadHistory() }
+                HistoryScreen(
+                    results = results,
+                    onClear = { vm.clearHistory() },
+                    onBack = { screen = Screen.HOME },
+                )
+            }
             Screen.PAIRING -> PairingScreen(
                 state = linkState,
                 bonded = remember(hasBt) { vm.link.bondedDevices() },

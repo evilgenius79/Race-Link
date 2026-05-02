@@ -84,6 +84,7 @@ class RaceEngine(
 
     private var jobs: List<Job> = emptyList()
     private var distanceJob: Job? = null
+    private var reconnectJob: Job? = null
     private var lastLoc: Location? = null
 
     fun start(isHost: Boolean, config: RaceConfig) {
@@ -136,7 +137,49 @@ class RaceEngine(
             scope.launch { hostWatcher() }
         } else null
 
-        jobs = listOfNotNull(j1, j2, j3, j4, j5, j6, j7)
+        // Watch for unexpected BT drops during an active race and try to
+        // reconnect with exponential backoff (1, 2, 4, 8, 16 s, then give up).
+        val j8 = scope.launch { reconnectWatcher() }
+
+        jobs = listOfNotNull(j1, j2, j3, j4, j5, j6, j7, j8)
+    }
+
+    /**
+     * Auto-reconnect loop. Only fires if the engine itself is still in an
+     * active phase (we don't want to fight the user's deliberate disconnect
+     * after a race ends).
+     */
+    private suspend fun reconnectWatcher() {
+        val activePhases = setOf(
+            Phase.ARMED, Phase.STAGED, Phase.TREE, Phase.RUNNING,
+        )
+        link.state.collect { connState ->
+            if (connState != BluetoothLink.ConnState.IDLE &&
+                connState != BluetoothLink.ConnState.ERROR
+            ) return@collect
+            if (_state.value.phase !in activePhases) return@collect
+            if (reconnectJob?.isActive == true) return@collect
+            reconnectJob = scope.launch {
+                _state.update { it.copy(message = "Lost connection - reconnecting…") }
+                var attempt = 0
+                while (attempt < 5 && _state.value.phase in activePhases) {
+                    val delayMs = (1000L shl attempt).coerceAtMost(16_000L)
+                    delay(delayMs)
+                    if (link.state.value == BluetoothLink.ConnState.CONNECTED) {
+                        _state.update { it.copy(message = null) }
+                        return@launch
+                    }
+                    if (!link.tryReconnect()) return@launch
+                    delay(2_000L)
+                    if (link.state.value == BluetoothLink.ConnState.CONNECTED) {
+                        _state.update { it.copy(message = null) }
+                        return@launch
+                    }
+                    attempt++
+                }
+                _state.update { it.copy(message = "Could not reconnect to peer.") }
+            }
+        }
     }
 
     /** User toggles their own ready state. */
@@ -345,6 +388,8 @@ class RaceEngine(
         jobs = emptyList()
         distanceJob?.cancel()
         distanceJob = null
+        reconnectJob?.cancel()
+        reconnectJob = null
         lastLoc = null
         lastSampleElapsed = null
     }

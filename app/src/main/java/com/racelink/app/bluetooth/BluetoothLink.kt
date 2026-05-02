@@ -79,6 +79,21 @@ class BluetoothLink(private val appContext: Context) {
     private var ioJob: Job? = null
     private var receiver: BroadcastReceiver? = null
 
+    /**
+     * Whether the most recent connect was the host or the guest, plus the
+     * peer address (only meaningful when we were the guest). Used by
+     * [tryReconnect] to put us back the way we were after a transient drop.
+     */
+    private var lastWasHost: Boolean = false
+    private var lastConnectedAddress: String? = null
+
+    /**
+     * Messages that were sent while we had no active socket. These are
+     * replayed once a new socket comes up - critical for the Finish
+     * message, which the peer needs to see to complete the race.
+     */
+    private val pendingMessages = mutableListOf<Message>()
+
     private val adapter: BluetoothAdapter? by lazy {
         val mgr = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         mgr?.adapter
@@ -181,6 +196,7 @@ class BluetoothLink(private val appContext: Context) {
             return
         }
         closeSocket()
+        lastWasHost = true
         _state.value = ConnState.LISTENING
         scope.launch {
             try {
@@ -207,6 +223,8 @@ class BluetoothLink(private val appContext: Context) {
             return
         }
         closeSocket()
+        lastWasHost = false
+        lastConnectedAddress = address
         _state.value = ConnState.CONNECTING
         scope.launch {
             try {
@@ -223,6 +241,19 @@ class BluetoothLink(private val appContext: Context) {
         }
     }
 
+    /**
+     * Re-establish the link after a transient drop. Returns false if we have
+     * no record of how we were connected (e.g. before the user has ever
+     * paired). Caller is expected to retry with backoff if needed.
+     */
+    fun tryReconnect(): Boolean {
+        if (lastWasHost) {
+            host(); return true
+        }
+        val addr = lastConnectedAddress ?: return false
+        connect(addr); return true
+    }
+
     @SuppressLint("MissingPermission")
     private suspend fun handleSocket(s: BluetoothSocket) {
         socket = s
@@ -232,9 +263,20 @@ class BluetoothLink(private val appContext: Context) {
         val name = try { remote.name } catch (_: SecurityException) { null }
         _peer.value = DiscoveredDevice(name, remote.address)
         _peerNickname.value = null
+        // Track address so a reconnect can target the same peer even if we
+        // were the host the first time (peer initiated connect).
+        lastConnectedAddress = remote.address
         ioJob = scope.launch { readLoop(s) }
         // Greet the peer with our nickname so they can show it in the UI.
         send(Message.Hello(selfNickname.ifBlank { "Driver" }, APP_VERSION))
+        // Replay anything that was queued while we were disconnected
+        // (e.g. a Finish message that completed the race during an outage).
+        val toReplay = synchronized(pendingMessages) {
+            val copy = pendingMessages.toList()
+            pendingMessages.clear()
+            copy
+        }
+        toReplay.forEach { send(it) }
     }
 
     private suspend fun readLoop(s: BluetoothSocket) {
@@ -256,7 +298,14 @@ class BluetoothLink(private val appContext: Context) {
     }
 
     fun send(msg: Message) {
-        val out = output ?: return
+        val out = output
+        if (out == null) {
+            // Queue messages that the peer truly needs to see eventually -
+            // dropping a Finish would orphan a race result. Speed updates
+            // and pings are time-sensitive and pointless to replay later.
+            if (msg.isDurable()) synchronized(pendingMessages) { pendingMessages.add(msg) }
+            return
+        }
         scope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -265,9 +314,15 @@ class BluetoothLink(private val appContext: Context) {
                 }
             } catch (e: IOException) {
                 _errors.emit("Send failed: ${e.message ?: "io"}")
+                if (msg.isDurable()) synchronized(pendingMessages) { pendingMessages.add(msg) }
                 disconnect()
             }
         }
+    }
+
+    private fun Message.isDurable(): Boolean = when (this) {
+        is Message.Finish, is Message.RaceResponse, is Message.Abort -> true
+        else -> false
     }
 
     fun disconnect() {
