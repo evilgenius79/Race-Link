@@ -82,12 +82,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         // Service lifecycle: keep the foreground service alive while a race
         // is being arranged or in progress; stop it once the engine is idle.
+        // Android 14+ throws SecurityException if you start a location-typed
+        // FGS without ACCESS_FINE_LOCATION granted, so gate the start.
         engine.state
             .distinctUntilChangedBy { it.phase }
             .onEach { s ->
                 val active = s.phase in ACTIVE_PHASES
-                if (active) RaceForegroundService.start(app)
-                else RaceForegroundService.stop(app)
+                if (active && tracker.hasPermission()) {
+                    RaceForegroundService.start(app)
+                } else {
+                    RaceForegroundService.stop(app)
+                }
             }
             .launchIn(viewModelScope)
 
@@ -140,13 +145,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tracker.stop()
     }
 
-    fun loadHistory(): List<RaceResult> = history.loadAll()
+    private val _history = MutableStateFlow<List<RaceResult>>(emptyList())
+    val historyResults: StateFlow<List<RaceResult>> = _history.asStateFlow()
 
-    fun clearHistory() {
-        viewModelScope.launch { history.clear() }
+    fun refreshHistory() {
+        viewModelScope.launch { _history.value = history.loadAll() }
     }
 
-    private var lastSavedFinish: Long? = null
+    fun clearHistory() {
+        viewModelScope.launch {
+            history.clear()
+            _history.value = emptyList()
+        }
+    }
+
     private fun persistResult(s: RaceEngine.State) {
         val selfMs = s.selfFinishMs ?: return
         val peerMs = s.peerFinishMs ?: return
@@ -172,6 +184,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
     }
+    private var lastSavedFinish: Long? = null
 
     override fun onCleared() {
         super.onCleared()

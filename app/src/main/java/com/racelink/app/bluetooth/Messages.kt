@@ -89,13 +89,22 @@ sealed class Message {
         fun decode(line: String): Message? {
             val o = runCatching { JSONObject(line) }.getOrNull() ?: return null
             return when (o.optString("t")) {
-                "hello" -> Hello(o.optString("name"), o.optString("v"))
+                "hello" -> Hello(
+                    // Cap nickname length so a malicious peer can't push huge
+                    // strings into our UI / persisted history.
+                    o.optString("name").take(32),
+                    o.optString("v").take(32),
+                )
                 "req" -> RaceRequest(
                     RaceConfig(
-                        startType = StartType.valueOf(o.optString("startType", "ROLLING")),
-                        rollSpeedMph = o.optInt("rollSpeedMph", 40),
-                        speedToleranceMph = o.optInt("speedToleranceMph", 3),
-                        distanceFt = o.optInt("distanceFt", 1320),
+                        // Wrap in runCatching so a peer sending an unknown
+                        // start type can't crash our read loop.
+                        startType = runCatching {
+                            StartType.valueOf(o.optString("startType", "ROLLING"))
+                        }.getOrDefault(StartType.ROLLING),
+                        rollSpeedMph = o.optInt("rollSpeedMph", 40).coerceIn(10, 200),
+                        speedToleranceMph = o.optInt("speedToleranceMph", 3).coerceIn(1, 20),
+                        distanceFt = o.optInt("distanceFt", 1320).coerceIn(100, 5280),
                     )
                 )
                 "resp" -> RaceResponse(o.optBoolean("ok"))

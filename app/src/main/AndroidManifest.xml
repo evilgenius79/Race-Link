@@ -15,7 +15,6 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
     <!-- Location: needed pre-31 for BT discovery, and for GPS speed always -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />

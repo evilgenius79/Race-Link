@@ -49,11 +49,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        vm.link.shutdown()
-        vm.tracker.stop()
-    }
+    // ViewModel lifecycle owns the BT link and location tracker; cleanup
+    // happens in AppViewModel.onCleared(). We deliberately don't tear them
+    // down here, since onDestroy fires on every config change.
 }
 
 private enum class Screen { TUTORIAL, HOME, PAIRING, CONFIG, RACE, HISTORY }
@@ -151,8 +149,10 @@ private fun AppRoot(vm: AppViewModel) {
             )
             Screen.HISTORY -> {
                 // Re-read history each time we land on this screen so a
-                // race that just finished is visible immediately.
-                val results = remember(screen) { vm.loadHistory() }
+                // race that just finished is visible immediately. The load
+                // happens off the main thread.
+                LaunchedEffect(Unit) { vm.refreshHistory() }
+                val results by vm.historyResults.collectAsState()
                 HistoryScreen(
                     results = results,
                     onClear = { vm.clearHistory() },

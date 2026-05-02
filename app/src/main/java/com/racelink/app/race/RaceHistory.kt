@@ -1,6 +1,8 @@
 package com.racelink.app.race
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -77,31 +79,35 @@ data class RaceResult(
     }
 }
 
+/**
+ * All disk I/O is forced onto the IO dispatcher; callers should use these
+ * suspend forms rather than blocking. The class itself is internally
+ * synchronized so concurrent writers are safe.
+ */
 class RaceHistoryStore(context: Context) {
     private val file = File(context.applicationContext.filesDir, FILE_NAME)
+    private val lock = Any()
 
-    @Synchronized
-    fun save(result: RaceResult) {
-        file.appendText(result.toJson().toString() + "\n")
+    suspend fun save(result: RaceResult): Unit = withContext(Dispatchers.IO) {
+        synchronized(lock) {
+            file.appendText(result.toJson().toString() + "\n")
+        }
     }
 
-    @Synchronized
-    fun loadAll(): List<RaceResult> {
-        if (!file.exists()) return emptyList()
-        return file.readLines()
-            .mapNotNull { RaceResult.fromJson(it) }
-            .sortedByDescending { it.timestampMs }
+    suspend fun loadAll(): List<RaceResult> = withContext(Dispatchers.IO) {
+        synchronized(lock) {
+            if (!file.exists()) emptyList()
+            else file.readLines()
+                .mapNotNull { RaceResult.fromJson(it) }
+                .sortedByDescending { it.timestampMs }
+        }
     }
 
-    @Synchronized
-    fun clear() {
-        runCatching { file.delete() }
+    suspend fun clear(): Unit = withContext(Dispatchers.IO) {
+        synchronized(lock) {
+            runCatching { file.delete() }
+        }
     }
-
-    /** Best (lowest) ET over the given distance, or null if no runs. */
-    fun bestEt(distanceFt: Int): Long? = loadAll()
-        .filter { it.distanceFt == distanceFt }
-        .minOfOrNull { it.selfEtMs }
 
     private companion object {
         const val FILE_NAME = "race_history.jsonl"

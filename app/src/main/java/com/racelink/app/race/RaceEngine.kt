@@ -85,6 +85,7 @@ class RaceEngine(
     private var jobs: List<Job> = emptyList()
     private var distanceJob: Job? = null
     private var reconnectJob: Job? = null
+    private var treeJob: Job? = null
     private var lastLoc: Location? = null
 
     fun start(isHost: Boolean, config: RaceConfig) {
@@ -112,7 +113,15 @@ class RaceEngine(
 
         val j4 = link.incoming
             .filterIsInstance<Message.Finish>()
-            .onEach { onPeerFinish(it.elapsedMillis, it.finalMph) }
+            .onEach {
+                // Don't accept a finish unless the peer should plausibly be
+                // running. Stops a malicious peer from injecting fake wins
+                // before we even start the race.
+                val ph = _state.value.phase
+                if (ph == Phase.RUNNING || ph == Phase.FINISHED) {
+                    onPeerFinish(it.elapsedMillis, it.finalMph)
+                }
+            }
             .launchIn(scope)
 
         val j5 = link.incoming
@@ -248,9 +257,14 @@ class RaceEngine(
 
     private fun onStartTree(peerGreenAt: Long) {
         if (_state.value.isHost) return
+        // Phase guard: only accept tree-start when we're armed/staged. Drops
+        // spoofed or duplicate StartTree messages from the peer.
+        val phase = _state.value.phase
+        if (phase != Phase.ARMED && phase != Phase.STAGED) return
         val localGreenAt = clockSync.peerToLocal(peerGreenAt)
         _state.update { it.copy(phase = Phase.STAGED) }
-        scope.launch { runTreeAndRace(localGreenAt) }
+        treeJob?.cancel()
+        treeJob = scope.launch { runTreeAndRace(localGreenAt) }
     }
 
     /**
@@ -390,6 +404,8 @@ class RaceEngine(
         distanceJob = null
         reconnectJob?.cancel()
         reconnectJob = null
+        treeJob?.cancel()
+        treeJob = null
         lastLoc = null
         lastSampleElapsed = null
     }

@@ -167,7 +167,12 @@ class BluetoothLink(private val appContext: Context) {
                 }
             }
         }
-        appContext.registerReceiver(receiver, filter)
+        // BT discovery uses system-protected broadcasts so this receiver
+        // doesn't need to be exported. Android 14+ throws SecurityException
+        // unless the export state is declared explicitly.
+        ContextCompat.registerReceiver(
+            appContext, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         if (a.isDiscovering) a.cancelDiscovery()
         _state.value = ConnState.DISCOVERING
         a.startDiscovery()
@@ -282,16 +287,36 @@ class BluetoothLink(private val appContext: Context) {
     private suspend fun readLoop(s: BluetoothSocket) {
         try {
             val reader = BufferedReader(InputStreamReader(s.inputStream, Charsets.UTF_8))
+            val sb = StringBuilder()
             while (true) {
-                val line = reader.readLine() ?: break
-                val msg = Message.decode(line) ?: continue
+                // Hand-rolled line read so we can enforce a hard upper bound.
+                // BufferedReader.readLine() will happily allocate gigabytes if
+                // the peer never sends a newline, which is a trivial DoS.
+                sb.setLength(0)
+                while (true) {
+                    val ch = reader.read()
+                    if (ch == -1) {
+                        if (sb.isEmpty()) return
+                        break
+                    }
+                    if (ch == '\n'.code) break
+                    if (ch == '\r'.code) continue
+                    sb.append(ch.toChar())
+                    if (sb.length > MAX_LINE_BYTES) {
+                        // Drop the connection rather than emit a partial line
+                        // or trust a peer that's behaving badly.
+                        Log.w(TAG, "peer sent oversized line, disconnecting")
+                        return
+                    }
+                }
+                val msg = Message.decode(sb.toString()) ?: continue
                 if (msg is Message.Hello) {
                     _peerNickname.value = msg.name.ifBlank { null }
                 }
                 _incoming.emit(msg)
             }
         } catch (e: IOException) {
-            Log.i(TAG, "read loop ended", e)
+            Log.i(TAG, "read loop ended")
         } finally {
             disconnect()
         }
@@ -347,6 +372,8 @@ class BluetoothLink(private val appContext: Context) {
     companion object {
         private const val TAG = "BluetoothLink"
         private const val APP_VERSION = "0.2.0"
+        /** Hard cap on a single line of JSON. Real messages are a few hundred bytes. */
+        private const val MAX_LINE_BYTES = 4096
         // SPP-style UUID, but app-specific so we don't collide with audio devices.
         // If you fork the app and want to talk only to your own builds, change this.
         val SERVICE_UUID: UUID = UUID.fromString("8b6e3c8a-1f44-4f5c-9c5c-1e2bd2e3ab51")

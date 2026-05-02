@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -65,7 +65,7 @@ fun RaceConfigScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
                 }
                 Text("RACE SETUP", style = MaterialTheme.typography.labelLarge, color = Color.White)
             }
@@ -249,7 +249,7 @@ private fun SliderRow(
             value = value.toFloat(),
             onValueChange = { onChange(it.toInt()) },
             valueRange = range,
-            steps = (range.endInclusive - range.start).toInt() - 1,
+            steps = ((range.endInclusive - range.start).toInt() - 1).coerceAtLeast(0),
             colors = SliderDefaults.colors(
                 thumbColor = MaterialTheme.colorScheme.primary,
                 activeTrackColor = MaterialTheme.colorScheme.primary,
