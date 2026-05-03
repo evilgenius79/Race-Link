@@ -29,8 +29,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,6 +59,13 @@ fun PairingScreen(
     onContinue: () -> Unit,
     onBack: () -> Unit,
 ) {
+    // Default to "Race Link only" so the list isn't dominated by car BT
+    // accessories. Toggle off to fall back to every paired/discovered device.
+    var showAll by rememberSaveable { mutableStateOf(false) }
+    val visibleBonded = if (showAll) bonded else bonded.filter { it.verified }
+    val visibleDiscovered = if (showAll) discovered else discovered.filter { it.verified }
+    val hiddenCount = (bonded.size - visibleBonded.size) + (discovered.size - visibleDiscovered.size)
+
     ScreenBackground {
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             TopBar(title = "PAIR", onBack = onBack)
@@ -100,16 +113,28 @@ fun PairingScreen(
                     }
                 }
 
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(16.dp))
 
-                if (bonded.isNotEmpty()) {
-                    SectionHeader("PAIRED DEVICES")
+                // Filter toggle - by default we hide non-Race-Link devices
+                // (car infotainment, OBD readers, headphones, etc.). The
+                // hidden count nudges the user toward expanding when they
+                // can't find their friend's phone.
+                FilterToggle(
+                    showAll = showAll,
+                    hiddenCount = hiddenCount,
+                    onToggle = { showAll = it },
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                if (visibleBonded.isNotEmpty()) {
+                    SectionHeader(if (showAll) "PAIRED DEVICES" else "PAIRED RACE LINK PHONES")
                     Spacer(Modifier.height(8.dp))
                     RaceSurface(Modifier.fillMaxWidth()) {
                         Column {
-                            bonded.forEachIndexed { i, d ->
+                            visibleBonded.forEachIndexed { i, d ->
                                 DeviceRow(d, onClick = { onConnect(d) })
-                                if (i < bonded.lastIndex) Box(
+                                if (i < visibleBonded.lastIndex) Box(
                                     Modifier.fillMaxWidth().height(1.dp).background(RaceColors.Outline)
                                 )
                             }
@@ -118,18 +143,24 @@ fun PairingScreen(
                     Spacer(Modifier.height(20.dp))
                 }
 
-                SectionHeader("NEARBY")
+                SectionHeader(if (showAll) "NEARBY" else "NEARBY RACE LINK PHONES")
                 Spacer(Modifier.height(8.dp))
-                if (discovered.isEmpty()) {
+                if (visibleDiscovered.isEmpty()) {
                     RaceSurface(Modifier.fillMaxWidth()) {
                         Box(
                             Modifier.fillMaxWidth().padding(20.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                if (state == BluetoothLink.ConnState.DISCOVERING)
-                                    "Searching for nearby cars…"
-                                else "Tap Scan to look for nearby cars",
+                                when {
+                                    state == BluetoothLink.ConnState.DISCOVERING && !showAll ->
+                                        "Searching… make sure the other phone has tapped Host."
+                                    state == BluetoothLink.ConnState.DISCOVERING ->
+                                        "Searching for nearby cars…"
+                                    !showAll ->
+                                        "No Race Link phones found. Make sure the other phone has tapped Host, or toggle 'Show all' above."
+                                    else -> "Tap Scan to look for nearby cars"
+                                },
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
@@ -138,7 +169,7 @@ fun PairingScreen(
                 } else {
                     RaceSurface(Modifier.fillMaxWidth()) {
                         LazyColumn {
-                            items(discovered) { d ->
+                            items(visibleDiscovered) { d ->
                                 DeviceRow(d, onClick = { onConnect(d) })
                                 Box(Modifier.fillMaxWidth().height(1.dp).background(RaceColors.Outline))
                             }
@@ -257,5 +288,44 @@ private fun DeviceRow(d: BluetoothLink.DiscoveredDevice, onClick: () -> Unit) {
             null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun FilterToggle(
+    showAll: Boolean,
+    hiddenCount: Int,
+    onToggle: (Boolean) -> Unit,
+) {
+    RaceSurface(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (showAll) "Showing all Bluetooth devices" else "Race Link phones only",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    if (showAll) "Includes car audio, OBD readers, headphones…"
+                    else if (hiddenCount > 0) "$hiddenCount other device${if (hiddenCount == 1) "" else "s"} hidden"
+                    else "No other devices hidden",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Switch(
+                checked = showAll,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = MaterialTheme.colorScheme.primary,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            )
+        }
     }
 }

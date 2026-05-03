@@ -47,7 +47,17 @@ class BluetoothLink(private val appContext: Context) {
 
     enum class ConnState { IDLE, LISTENING, DISCOVERING, CONNECTING, CONNECTED, ERROR }
 
-    data class DiscoveredDevice(val name: String?, val address: String)
+    /**
+     * A device the OS told us about, plus whether SDP confirms it advertises
+     * our app's service UUID. The [verified] flag lets the UI hide the
+     * deluge of car infotainment / OBD readers / headphones the user is
+     * paired with and only show actual Race Link hosts.
+     */
+    data class DiscoveredDevice(
+        val name: String?,
+        val address: String,
+        val verified: Boolean = false,
+    )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -94,6 +104,19 @@ class BluetoothLink(private val appContext: Context) {
      */
     private val pendingMessages = mutableListOf<Message>()
 
+    /**
+     * Bumped whenever a device's SDP UUIDs change - the UI uses this to
+     * re-read the bonded list so a freshly verified device shows up.
+     */
+    private val _bondedRefreshTick = MutableStateFlow(0)
+    val bondedRefreshTick: StateFlow<Int> = _bondedRefreshTick.asStateFlow()
+
+    @Suppress("DEPRECATION")
+    private fun extractDevice(intent: Intent): BluetoothDevice? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+        else intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+
     private val adapter: BluetoothAdapter? by lazy {
         val mgr = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         mgr?.adapter
@@ -123,9 +146,28 @@ class BluetoothLink(private val appContext: Context) {
     @SuppressLint("MissingPermission")
     fun bondedDevices(): List<DiscoveredDevice> {
         if (!hasConnectPerm()) return emptyList()
-        return adapter?.bondedDevices.orEmpty().map {
-            DiscoveredDevice(it.name, it.address)
+        return adapter?.bondedDevices.orEmpty().map { device ->
+            // device.uuids returns whatever was cached the last time SDP ran
+            // for this device. If the peer is currently hosting a Race Link
+            // session, our SERVICE_UUID will be in there.
+            val cached = try {
+                device.uuids?.any { it.uuid == SERVICE_UUID } == true
+            } catch (_: SecurityException) {
+                false
+            }
+            DiscoveredDevice(device.name, device.address, verified = cached)
         }
+    }
+
+    /**
+     * Kick off a refresh of the cached SDP UUIDs for every bonded device.
+     * Results stream in via the [BluetoothDevice.ACTION_UUID] broadcast and
+     * update the verified flag in [discovered] / [bonded snapshots].
+     */
+    @SuppressLint("MissingPermission")
+    fun refreshBondedSdp() {
+        if (!hasConnectPerm()) return
+        adapter?.bondedDevices?.forEach { runCatching { it.fetchUuidsWithSdp() } }
     }
 
     /**
@@ -144,21 +186,45 @@ class BluetoothLink(private val appContext: Context) {
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_FOUND)
             addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+            // ACTION_UUID fires when SDP discovery finishes for a device,
+            // either because we called fetchUuidsWithSdp or the system did.
+            // We use it to mark devices that publish our service UUID.
+            addAction(BluetoothDevice.ACTION_UUID)
         }
         receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     BluetoothDevice.ACTION_FOUND -> {
-                        @Suppress("DEPRECATION")
-                        val dev: BluetoothDevice? =
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-                                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
-                            else intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                        dev ?: return
+                        val dev = extractDevice(intent) ?: return
                         val name = try { dev.name } catch (_: SecurityException) { null }
-                        val item = DiscoveredDevice(name, dev.address)
+                        val item = DiscoveredDevice(name, dev.address, verified = false)
                         _discovered.update { cur ->
                             if (cur.any { it.address == item.address }) cur else cur + item
+                        }
+                        // Ask the OS to do an SDP query against this device so
+                        // we can decide whether it's actually a Race Link host.
+                        runCatching { dev.fetchUuidsWithSdp() }
+                    }
+                    BluetoothDevice.ACTION_UUID -> {
+                        val dev = extractDevice(intent) ?: return
+                        @Suppress("DEPRECATION")
+                        val parcels = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                            intent.getParcelableArrayExtra(
+                                BluetoothDevice.EXTRA_UUID, android.os.ParcelUuid::class.java,
+                            )
+                        else intent.getParcelableArrayExtra(BluetoothDevice.EXTRA_UUID)
+                        val advertisesUs = parcels?.any {
+                            (it as? android.os.ParcelUuid)?.uuid == SERVICE_UUID
+                        } == true
+                        if (advertisesUs) {
+                            _discovered.update { cur ->
+                                cur.map {
+                                    if (it.address == dev.address) it.copy(verified = true) else it
+                                }
+                            }
+                            // Also tickle the bonded list so it picks up the
+                            // freshly-cached UUID on the next read.
+                            _bondedRefreshTick.value = _bondedRefreshTick.value + 1
                         }
                     }
                     BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
@@ -176,6 +242,10 @@ class BluetoothLink(private val appContext: Context) {
         if (a.isDiscovering) a.cancelDiscovery()
         _state.value = ConnState.DISCOVERING
         a.startDiscovery()
+        // Kick the bonded list too so phones we've already paired with get
+        // a fresh SDP check - this is how a known peer that's currently
+        // hosting gets surfaced as "verified" without a full scan first.
+        refreshBondedSdp()
     }
 
     @SuppressLint("MissingPermission")

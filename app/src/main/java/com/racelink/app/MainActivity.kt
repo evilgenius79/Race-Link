@@ -113,6 +113,7 @@ private fun AppRoot(vm: AppViewModel) {
     val discovered by vm.link.discovered.collectAsState()
     val peer by vm.link.peer.collectAsState()
     val peerNickname by vm.link.peerNickname.collectAsState()
+    val bondedRefreshTick by vm.link.bondedRefreshTick.collectAsState()
     val lastConfig by vm.lastConfig.collectAsState()
     val nickname by vm.nickname.collectAsState()
 
@@ -159,9 +160,15 @@ private fun AppRoot(vm: AppViewModel) {
                     onBack = { screen = Screen.HOME },
                 )
             }
-            Screen.PAIRING -> PairingScreen(
+            Screen.PAIRING -> {
+                // Refresh SDP for paired devices the moment we land here so
+                // a friend who's already hosting shows up without scanning.
+                LaunchedEffect(Unit) { vm.link.refreshBondedSdp() }
+                PairingScreen(
                 state = linkState,
-                bonded = remember(hasBt) { vm.link.bondedDevices() },
+                // Re-read bonded devices when SDP completes so a phone that
+                // just started hosting becomes visible without a reload.
+                bonded = remember(hasBt, bondedRefreshTick) { vm.link.bondedDevices() },
                 discovered = discovered,
                 peer = peer,
                 onScan = { vm.link.startDiscovery() },
@@ -171,7 +178,8 @@ private fun AppRoot(vm: AppViewModel) {
                 onDisconnect = { vm.link.disconnect() },
                 onContinue = { screen = Screen.CONFIG },
                 onBack = { screen = Screen.HOME },
-            )
+                )
+            }
             Screen.CONFIG -> RaceConfigScreen(
                 initial = lastConfig,
                 pendingResponse = outboundPending,
